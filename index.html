@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
-<title>シャボン玉 ふみふみ</title>
+<title>シャボン玉 ふみふみ（映しっぱなし）</title>
 <style>
   :root { --panel: rgba(14, 24, 52, 0.94); --line: rgba(255,255,255,0.18); --accent: #7fd6ff; }
   * { box-sizing: border-box; }
@@ -43,10 +43,6 @@
 
 <div id="panel" aria-label="せってい">
   <h2>せってい</h2>
-  <div class="row"><label>あそぶ時間</label>
-    <span class="seg" data-key="time">
-      <button data-v="30">30秒</button><button data-v="60">60秒</button><button data-v="90">90秒</button><button data-v="0">ずっと</button>
-    </span></div>
   <div class="row"><label>玉の大きさ</label>
     <span class="seg" data-key="size">
       <button data-v="0.8">ふつう</button><button data-v="1">大きい</button><button data-v="1.25">とても大きい</button>
@@ -68,8 +64,9 @@
       <button data-v="0">オフ</button><button data-v="1">オン</button>
     </span>
     <span class="note">床センサーがマウス移動として届くとき「オン」</span></div>
+  <p class="note">映しっぱなし用：スタートも終わりもありません。30こ割るごとに「ごほうびタイム」。40秒だれも割らないと、かずは 0 にもどります。<br>音はブラウザのきまりで、開いたあと1回だけ画面をタッチ（またはキーを押す）と鳴るようになります。<br>時間つきのゲーム版は game.html。</p>
   <div class="row"><button class="btn" id="fsBtn" type="button">全画面</button>
-    <button class="btn" id="restartBtn" type="button">はじめにもどる</button></div>
+    <button class="btn" id="restartBtn" type="button">かずを 0 にもどす</button></div>
 
   <h3>カメラで足を見つける</h3>
   <p class="note">床と投影が映るようにカメラを置き、「カメラを使う」→「自動で位置合わせ」。部屋は暗めがおすすめです。</p>
@@ -93,10 +90,11 @@
   const TEST = /[?&]test\b/.test(location.search);
 
   // ---------- せってい ----------
-  const DEF = { time: "60", size: "1", amount: "1", speed: "1", sound: "1", hover: "0", flip: "0", sens: 55, camId: "" };
+  const DEF = { time: "0", camOn: "0", size: "1", amount: "1", speed: "1", sound: "1", hover: "0", flip: "0", sens: 55, camId: "" };
   const S = Object.assign({}, DEF);
-  try { Object.assign(S, JSON.parse(localStorage.getItem("syabonFumuSettings") || "{}")); } catch (e) {}
-  const save = () => { try { localStorage.setItem("syabonFumuSettings", JSON.stringify(S)); } catch (e) {} };
+  try { Object.assign(S, JSON.parse(localStorage.getItem("syabonFumuAlwaysSettings") || "{}")); } catch (e) {}
+  S.time = "0";   // 映しっぱなし：時間切れはない
+  const save = () => { try { localStorage.setItem("syabonFumuAlwaysSettings", JSON.stringify(S)); } catch (e) {} };
 
   document.querySelectorAll(".seg").forEach((seg) => {
     const key = seg.dataset.key;
@@ -117,15 +115,15 @@
   $("gear").addEventListener("click", () => togglePanel());
   const toggleFS = () => { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen?.().catch(() => {}); };
   $("fsBtn").addEventListener("click", toggleFS);
-  $("restartBtn").addEventListener("click", () => toTitle());
+  $("restartBtn").addEventListener("click", () => resetCount());
   addEventListener("keydown", (e) => {
     if (e.target.tagName === "SELECT" || e.target.tagName === "INPUT") return;
     const k = e.key.toLowerCase();
+    unlockAudio();
     if (k === "s") togglePanel();
     else if (k === "escape") togglePanel(false);
     else if (k === "f") toggleFS();
-    else if (k === "r") toTitle();
-    else if (k === " " && game.state === "title") startRound();
+    else if (k === "r") resetCount();
   });
 
   // ---------- 音 ----------
@@ -198,7 +196,7 @@
   // ---------- ゲームの中身 ----------
   const rand = (a, b) => a + Math.random() * (b - a);
   const HUES = [195, 330, 50, 140, 270, 20, 175];
-  const game = { state: "title", t: 0, stateT: 0, count: 0, timeLeft: 0, bubbles: [], fx: [], dots: [], startBubble: null, spawnWait: 0 };
+  const game = { state: "play", lastPop: -999, party: 0, nextParty: 30, t: 0, stateT: 0, count: 0, timeLeft: 0, bubbles: [], fx: [], dots: [], startBubble: null, spawnWait: 0 };
   let nextId = 1;
 
   function targetCount() {
@@ -223,7 +221,8 @@
     let kind = "normal";
     if (!opt.kind && (game.state === "play" || game.state === "ready")) {
       const p = Math.random();
-      if (p < 0.09) kind = "rainbow"; else if (p < 0.17) kind = "gold";
+      const m = game.party > 0 ? 3 : 1;
+      if (p < 0.08 * m) kind = "rainbow"; else if (p < 0.16 * m) kind = "gold";
     }
     kind = opt.kind || kind;
     const r = opt.r || R0 * (kind === "rainbow" ? 1.25 : rand(0.85, 1.12));
@@ -254,6 +253,8 @@
     game.fx.push({ type: "ring", x: b.x, y: b.y, r: b.r, life: 0.4, max: 0.4, hue: b.hue });
     if (b.counts) {
       game.count++;
+      game.lastPop = game.t;
+      if (game.count >= game.nextParty) { game.nextParty += PARTY_EVERY; startParty(); }
       game.fx.push({ type: "plus", x: b.x, y: b.y, life: 0.8, max: 0.8, text: "+1", hue: b.hue });
     }
     if (b.kind === "gold") {
@@ -274,55 +275,40 @@
   }
 
   // ---------- 状態 ----------
-  function toTitle() {
-    game.state = "title"; game.stateT = 0;
-    game.startBubble = { x: W / 2, y: H / 2, r: MIN * 0.17, ph: 0 };
-    game.bubbles = game.bubbles.filter((b) => Math.hypot(b.x - W / 2, b.y - H / 2) > MIN * 0.3);
-    game.bubbles.forEach((b) => (b.counts = false));
-  }
-  function startRound() {
-    unlockAudio();
-    game.state = "ready"; game.stateT = 0; game.count = 0;
-    game.startBubble = null;
-    game.bubbles.forEach((b) => (b.counts = true));
-    sndJingle([0, 2, 4, null, 5], 0.13);
-  }
-  function endRound() {
-    game.state = "end"; game.stateT = 0;
-    game.bubbles.forEach((b) => (b.counts = false));
+  // ---------- 映しっぱなし ----------
+  const PARTY_EVERY = 30;     // この数ごとに「ごほうびタイム」
+  const IDLE_RESET = 40;      // だれも割らない時間がこれだけ続いたら、かずを 0 にもどす
+  function resetCount() { game.count = 0; game.nextParty = PARTY_EVERY; game.party = 0; }
+  function startParty() {
+    game.party = 8;           // 8秒間、玉がいっぱい
     sndJingle([4, 5, 6, 7, null, 5, 8], 0.13);
-    for (let k = 0; k < 60; k++) game.fx.push({ type: "confetti", x: rand(0, W), y: rand(-H * 0.2, H), vx: rand(-20, 20), vy: rand(20, 70),
-      life: rand(3, 6), max: 6, hue: rand(0, 360), s: MIN * rand(0.008, 0.014), rot: rand(0, 6), vr: rand(-4, 4) });
+    for (let k = 0; k < 50; k++) game.fx.push({ type: "confetti", x: rand(0, W), y: rand(-H * 0.2, H), vx: rand(-20, 20), vy: rand(20, 70),
+      life: rand(3, 5), max: 5, hue: rand(0, 360), s: MIN * rand(0.008, 0.014), rot: rand(0, 6), vr: rand(-4, 4) });
   }
+  function startRound() {}
 
   function update(dt) {
     game.t += dt; game.stateT += dt;
     const st = game.state;
-    if (st === "ready" && game.stateT > 1.6) {
-      game.state = "play"; game.stateT = 0; game.timeLeft = +S.time;
-    }
-    if (st === "play" && +S.time > 0) {
-      const before = Math.ceil(game.timeLeft);
-      game.timeLeft -= dt;
-      const now = Math.ceil(game.timeLeft);
-      if (now !== before && now <= 5 && now > 0) sndJingle([7], 0.1, "sine");
-      if (game.timeLeft <= 0) endRound();
-    }
-    if (st === "end" && game.stateT > 9) toTitle();
+    if (game.party > 0) game.party -= dt;
+    if (game.count > 0 && game.t - game.lastPop > IDLE_RESET) resetCount();
 
     // 玉を足す
-    const want = st === "title" ? Math.max(4, Math.round(targetCount() * 0.5)) : targetCount();
+    const want = Math.round(targetCount() * (game.party > 0 ? 1.6 : 1));
     game.spawnWait -= dt;
-    const bigOnes = game.bubbles.filter((b) => b.kind !== "small").length;
-    if (bigOnes < want && game.spawnWait <= 0) {
+    const bigOnes = game.bubbles.filter((b) => b.kind !== "small" && !b.leaving);
+    if (bigOnes.length < want && game.spawnWait <= 0) {
       game.bubbles.push(makeBubble());
-      game.spawnWait = st === "play" ? rand(0.12, 0.35) : 0.6;
+      game.spawnWait = game.party > 0 ? rand(0.05, 0.12) : rand(0.15, 0.4);
     }
+    // 多すぎる玉（ごほうびタイムのあと）や、割られない小さい玉は、ゆっくり消える
+    if (bigOnes.length > want + 1 && game.party <= 0) bigOnes[0].leaving = true;
+    for (const b of game.bubbles) if (b.kind === "small" && b.age > 25) b.leaving = true;
 
     // 玉を動かす
     for (const b of game.bubbles) {
       b.age += dt; b.ph += dt;
-      b.grow = Math.min(1, b.grow + dt * 1.4);
+      b.grow = b.leaving ? b.grow - dt * 0.5 : Math.min(1, b.grow + dt * 1.4);
       if (b.friction) {
         const f = Math.exp(-dt * 2.2), min = R0 * 0.3;
         if (Math.hypot(b.vx, b.vy) > min) { b.vx *= f; b.vy *= f; }
@@ -343,6 +329,7 @@
         if (d < m) { b.x = sb.x + (dx / d) * m; b.y = sb.y + (dy / d) * m; b.vx += (dx / d) * 20; b.vy += (dy / d) * 20; }
       }
     }
+    game.bubbles = game.bubbles.filter((b) => !b.leaving || b.grow > 0);
     // 玉どうしはやさしく離す
     const bs = game.bubbles;
     for (let i = 0; i < bs.length; i++) for (let j = i + 1; j < bs.length; j++) {
@@ -508,31 +495,33 @@
     }
 
     // 文字
-    const st = game.state;
-    if (st === "ready") {
-      const msg = game.stateT < 0.9 ? "よーい…" : "スタート！";
-      const s = MIN * 0.13 * (1 + Math.max(0, 0.3 - (game.stateT % 0.9)) );
-      text(msg, W / 2, H / 2, s, "#fff");
-      text(msg, W / 2, H / 2 - s * 1.3, s * 0.6, "#bfe9ff", Math.PI);
+    if (game.count > 0) {
+      const left = IDLE_RESET - (game.t - game.lastPop);
+      ctx.globalAlpha = Math.min(1, left / 5);     // だれもいなくなったら、すっと消える
+      hudPill(`みんなで ${game.count}こ`, game.party > 0 ? "ごほうびタイム！" : null, null);
+      ctx.globalAlpha = 1;
     }
-    if (st === "play") {
-      const tl = +S.time > 0 ? Math.max(0, Math.ceil(game.timeLeft)) : null;
-      const sub = tl != null && tl <= 5 ? "あと " + tl : null;
-      hudPill(`みんなで ${game.count}こ`, sub, tl != null ? Math.max(0, game.timeLeft / +S.time) : null);
+    if (game.party > 7) {
+      const k = 1 - (game.party - 7);
+      const s = MIN * 0.12 * (0.7 + 0.3 * Math.min(1, k * 3));
+      ctx.globalAlpha = Math.min(1, (8 - game.party) * 4, (game.party - 7) * 3 + 0.2);
+      text("ごほうびタイム！", W / 2, H / 2 + s * 0.8, s, "#ffe08a");
+      text("ごほうびタイム！", W / 2, H / 2 - s * 0.8, s, "#ffe08a", Math.PI);
+      ctx.globalAlpha = 1;
     }
-    if (st === "end") {
-      const k = Math.min(1, game.stateT / 0.5);
-      const s = MIN * 0.11 * (0.6 + 0.4 * k);
-      for (const flip of [false, true]) {
-        ctx.save(); if (flip) { ctx.translate(W, H); ctx.rotate(Math.PI); }
-        const y0 = H / 2 + s * 1.65;   // さかさまのほうは回して画面の上半分に出る
-        text("おしまい！", W / 2, y0 - s * 0.95, s * 0.6, "#bfe9ff");
-        text(`みんなで ${game.count}こ`, W / 2, y0, s, "#ffe08a");
-        text(game.count >= 30 ? "すごーい！" : "やったね！", W / 2, y0 + s * 0.95, s * 0.6, "#fff");
-        ctx.restore();
+    // しばらくだれも来ないときは、玉のそばに足あとを出して「ふんでね」
+    if (game.t - game.lastPop > 12) {
+      const idle = game.t - game.lastPop, cyc = idle % 8;
+      if (cyc < 3 && game.bubbles.length) {
+        const b = game.bubbles[(Math.floor(idle / 8) * 7) % game.bubbles.length];
+        if (b && b.grow >= 1) {
+          ctx.globalAlpha = Math.sin((cyc / 3) * Math.PI) * 0.8;
+          for (const sd of [-1, 1]) drawFoot(b.x + sd * b.r * 0.22, b.y + b.r * 1.45 + (sd > 0 ? -b.r * 0.1 : 0), b.r * 0.17, sd);
+          text("ふんでね", b.x, b.y + b.r * 2.05, b.r * 0.32, "#fff");
+          ctx.globalAlpha = 1;
+        }
       }
     }
-    if (st === "title" && game.count > 0) hudPill(`まえは ${game.count}こ`, null, null);
 
     // ふんだところ（タッチ）を光らせる
     for (const p of touches.values()) {
@@ -667,7 +656,7 @@
       let hit = 0, n = 0;
       for (let gy = Math.max(0, ((y - r) / ch) | 0); gy <= Math.min(GY - 1, ((y + r) / ch) | 0); gy++) {
         const cy = (gy + 0.5) * ch;
-        if (game.state === "play" && (cy < hudH || cy > H - hudH) && Math.abs(x - W / 2) < MIN * 0.35) continue;   // 数字の帯は見ない
+        if (game.count > 0 && (cy < hudH || cy > H - hudH) && Math.abs(x - W / 2) < MIN * 0.35) continue;   // 数字の帯は見ない
         for (let gx = Math.max(0, ((x - r) / cw) | 0); gx <= Math.min(GX - 1, ((x + r) / cw) | 0); gx++) {
           const cx = (gx + 0.5) * cw;
           if ((cx - x) ** 2 + (cy - y) ** 2 > r * r) continue;
@@ -717,7 +706,11 @@
     if (stream) stream.getTracks().forEach((t) => t.stop());
     stream = null; $("camBtn").textContent = "カメラを使う"; motion.fill(0);
   }
-  $("camBtn").addEventListener("click", () => { unlockAudio(); stream ? (stopCamera(), $("camStatus").textContent = "") : startCamera(); });
+  $("camBtn").addEventListener("click", () => {
+    unlockAudio();
+    if (stream) { stopCamera(); $("camStatus").textContent = ""; S.camOn = "0"; save(); }
+    else startCamera().then(() => { if (stream) { S.camOn = "1"; save(); } });
+  });
   $("camSelect").addEventListener("change", () => { S.camId = $("camSelect").value; save(); if (stream) startCamera(); });
   $("resetMapBtn").addEventListener("click", () => {
     calib.H = null; calib.pts = null; cellCache = null;
@@ -818,7 +811,6 @@
   // ---------- まわす ----------
   for (let k = 0; k < 40; k++) game.dots.push({ x: Math.random(), y: Math.random(), s: rand(0.002, 0.006), v: rand(0.004, 0.015), p: rand(0, 6) });
   resize();
-  toTitle();
   let last = performance.now(), camLast = 0;
   function frame(now) {
     const dt = Math.min(0.05, (now - last) / 1000); last = now;
@@ -831,12 +823,24 @@
   requestAnimationFrame(frame);
   if (navigator.mediaDevices?.enumerateDevices) listCameras();
 
+  // 前にカメラを使っていたら、開いたときに自動でカメラを始める
+  if (S.camOn === "1" && !TEST && navigator.mediaDevices?.getUserMedia) startCamera();
+
+  // 画面が暗くならないように（映しっぱなし用）
+  let wakeLock = null;
+  async function keepAwake() {
+    try { if (!wakeLock && document.visibilityState === "visible") { wakeLock = await navigator.wakeLock.request("screen"); wakeLock.addEventListener("release", () => (wakeLock = null)); } } catch (e) {}
+  }
+  keepAwake();
+  document.addEventListener("visibilitychange", keepAwake);
+  addEventListener("pointerdown", keepAwake);
+
   // ---------- テスト用（?test） ----------
   if (TEST) {
     window.__fumu = {
       get state() { return { state: game.state, count: game.count, timeLeft: game.timeLeft, bubbles: game.bubbles.length, W, H, R0 }; },
       bubbles: () => game.bubbles.map((b) => ({ x: b.x, y: b.y, r: b.r, kind: b.kind, grow: b.grow })),
-      start: () => (game.state === "title" ? hitAt(W / 2, H / 2) : false),
+      reset: resetCount,
       step: (x, y) => hitAt(x, y),
       tick: (sec) => { for (let t = 0; t < sec; t += 0.033) update(0.033); draw(); },
       // カメラの代わりに、画面の (x,y) 半径 r に動きを入れる
@@ -849,13 +853,16 @@
       },
       solveH, applyH, game,
     };
-    // ?test&auto=play / end : スクリーンショット確認用にその場面まで進める
+    // ?test&auto=play / party / idle : スクリーンショット確認用にその場面まで進める
     const auto = (location.search.match(/auto=(\w+)/) || [])[1];
     if (auto) {
-      __fumu.start(); __fumu.tick(4);
-      for (const b of game.bubbles.slice(0, 5)) hitAt(b.x, b.y);
-      __fumu.tick(0.2);
-      if (auto === "end") { game.timeLeft = 0.05; __fumu.tick(1.5); }
+      __fumu.tick(4);
+      if (auto === "idle") __fumu.tick(10.5);
+      else {
+        for (const b of game.bubbles.slice(0, 5)) hitAt(b.x, b.y);
+        if (auto === "party") { game.count = PARTY_EVERY - 1; hitAt(game.bubbles[0].x, game.bubbles[0].y); }
+        __fumu.tick(auto === "party" ? 0.5 : 0.2);
+      }
     }
   }
 })();
