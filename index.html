@@ -59,12 +59,16 @@
     <span class="seg" data-key="sound">
       <button data-v="1">あり</button><button data-v="0">なし</button>
     </span></div>
+  <div class="row"><label>BGM</label>
+    <span class="seg" data-key="bgm">
+      <button data-v="1">あり</button><button data-v="0">なし</button>
+    </span></div>
   <div class="row"><label>のせるだけ</label>
     <span class="seg" data-key="hover">
       <button data-v="0">オフ</button><button data-v="1">オン</button>
     </span>
     <span class="note">床センサーがマウス移動として届くとき「オン」</span></div>
-  <p class="note">映しっぱなし用：スタートも終わりもありません。30こ割るごとに「ごほうびタイム」。40秒だれも割らないと、かずは 0 にもどります。<br>音はブラウザのきまりで、開いたあと1回だけ画面をタッチ（またはキーを押す）と鳴るようになります。<br>時間つきのゲーム版は game.html。</p>
+  <p class="note">映しっぱなし用：スタートも終わりもありません。みんなで30こ割るごとに「ごほうびタイム」（15秒：BGM がはやくなり、まわりがにじいろに光り、玉がいっぱい）。<br>音はブラウザのきまりで、開いたあと1回だけ画面をタッチ（またはキーを押す）と鳴るようになります。<br>時間つきのゲーム版は game.html。</p>
   <div class="row"><button class="btn" id="fsBtn" type="button">全画面</button>
     <button class="btn" id="restartBtn" type="button">かずを 0 にもどす</button></div>
 
@@ -90,7 +94,7 @@
   const TEST = /[?&]test\b/.test(location.search);
 
   // ---------- せってい ----------
-  const DEF = { time: "0", camOn: "0", size: "1", amount: "1", speed: "1", sound: "1", hover: "0", flip: "0", sens: 55, camId: "" };
+  const DEF = { time: "0", camOn: "0", bgm: "1", size: "1", amount: "1", speed: "1", sound: "1", hover: "0", flip: "0", sens: 55, camId: "" };
   const S = Object.assign({}, DEF);
   try { Object.assign(S, JSON.parse(localStorage.getItem("syabonFumuAlwaysSettings") || "{}")); } catch (e) {}
   S.time = "0";   // 映しっぱなし：時間切れはない
@@ -175,6 +179,71 @@
     notes.forEach((n, i) => { if (n != null) tone(SCALE[n] || n, t + i * step, step * 2.2, 0.2, type, 1); });
   }
 
+  // ---------- BGM（ふだん：ゆったりオルゴール／ごほうびタイム：はやいおまつり） ----------
+  // C - Am - F - G をくりかえす。音は少し先まで予約して鳴らす
+  const CHORDS = [[261.6, 329.6, 392.0], [220.0, 261.6, 329.6], [174.6, 220.0, 261.6], [196.0, 246.9, 293.7]];
+  const PENTA = [523.3, 587.3, 659.3, 784.0, 880.0, 1046.5];
+  let bgmGain = null, bgmNext = 0, bgmStep = 0, bgmMode = "calm";
+  function bgmNote(freq, when, dur, vol, type) {
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.type = type; o.frequency.value = freq;
+    g.gain.setValueAtTime(0.0001, when);
+    g.gain.exponentialRampToValueAtTime(vol, when + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
+    o.connect(g).connect(bgmGain); o.start(when); o.stop(when + dur + 0.05);
+  }
+  function bgmHat(when, vol) {
+    if (!noiseBuf) return;
+    const sr = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain();
+    sr.buffer = noiseBuf; f.type = "highpass"; f.frequency.value = 7000; g.gain.value = vol;
+    sr.connect(f).connect(g).connect(bgmGain); sr.start(when); sr.stop(when + 0.05);
+  }
+  function bgmKick(when) {
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.frequency.setValueAtTime(150, when); o.frequency.exponentialRampToValueAtTime(45, when + 0.12);
+    g.gain.setValueAtTime(0.7, when); g.gain.exponentialRampToValueAtTime(0.0001, when + 0.18);
+    o.connect(g).connect(bgmGain); o.start(when); o.stop(when + 0.2);
+  }
+  function bgmTick() {
+    if (!ac || ac.state !== "running") return;
+    if (!bgmGain) { bgmGain = ac.createGain(); bgmGain.gain.value = 0; bgmGain.connect(ac.destination); bgmNext = ac.currentTime + 0.1; }
+    if (!noiseBuf) puff(ac.currentTime, 0.0001);        // 雑音バッファを用意
+    const on = S.bgm === "1" && S.sound === "1";
+    bgmGain.gain.setTargetAtTime(on ? 0.5 : 0, ac.currentTime, 0.3);
+    if (bgmNext < ac.currentTime) bgmNext = ac.currentTime + 0.05;
+    while (bgmNext < ac.currentTime + 0.25) {
+      const t = bgmNext;
+      // ごほうびタイムになったら（終わったら）すぐ曲を切りかえて、小節のはじめから
+      const mode = game.party > 0.8 ? "party" : "calm";
+      if (mode !== bgmMode) { bgmMode = mode; bgmStep = Math.ceil(bgmStep / 16) * 16; }
+      const ch = CHORDS[Math.floor(bgmStep / 16) % 4];
+      const i = bgmStep % 16;
+      if (bgmMode === "calm") {
+        // 1拍0.4秒のゆっくり8分音符。オルゴールみたいな分散和音
+        if (i % 2 === 0) {
+          const k = i / 2, f = ch[[0, 1, 2, 1, 0, 2, 1, 2][k]] * 2;
+          bgmNote(f, t, 1.2, 0.07, "sine");
+          if (k === 0) bgmNote(ch[0] / 2, t, 2.6, 0.06, "triangle");
+          if (k === 4) bgmNote(ch[2] / 2, t, 1.6, 0.04, "triangle");
+        }
+        bgmNext += 0.2;
+      } else {
+        // はやい16分音符：ベース・ドン・チッ・ピコピコのメロディ
+        if (i % 4 === 0) bgmKick(t);
+        if (i % 2 === 1) bgmHat(t, 0.12);
+        if (i % 4 === 2) bgmNote(ch[0] / 2, t, 0.2, 0.12, "square");
+        if (i % 2 === 0) {
+          const f = Math.random() < 0.5 ? ch[(i / 2) % 3] * 2 : PENTA[(Math.random() * PENTA.length) | 0];
+          bgmNote(f, t, 0.18, 0.07, "triangle");
+        }
+        if (i === 0 || i === 8) bgmNote(ch[1] * 4, t, 0.3, 0.03, "sine");
+        bgmNext += 0.11;
+      }
+      bgmStep++;
+    }
+  }
+  setInterval(bgmTick, 80);
+
   // ---------- 画面 ----------
   const cv = $("game"), ctx = cv.getContext("2d");
   let W = 0, H = 0, DPR = 1, MIN = 1, R0 = 60, bg = null;
@@ -196,7 +265,7 @@
   // ---------- ゲームの中身 ----------
   const rand = (a, b) => a + Math.random() * (b - a);
   const HUES = [195, 330, 50, 140, 270, 20, 175];
-  const game = { state: "play", lastPop: -999, party: 0, nextParty: 30, t: 0, stateT: 0, count: 0, timeLeft: 0, bubbles: [], fx: [], dots: [], startBubble: null, spawnWait: 0 };
+  const game = { state: "play", partyN: 0, partyMix: 0, lastPop: -999, party: 0, nextParty: 30, t: 0, stateT: 0, count: 0, timeLeft: 0, bubbles: [], fx: [], dots: [], startBubble: null, spawnWait: 0 };
   let nextId = 1;
 
   function targetCount() {
@@ -225,7 +294,7 @@
       if (p < 0.08 * m) kind = "rainbow"; else if (p < 0.16 * m) kind = "gold";
     }
     kind = opt.kind || kind;
-    const r = opt.r || R0 * (kind === "rainbow" ? 1.25 : rand(0.85, 1.12));
+    const r = opt.r || R0 * (kind === "rainbow" ? 1.25 : rand(0.85, 1.12)) * (game.party > 0 && !opt.kind ? rand(0.7, 0.95) : 1);
     const spot = opt.x != null ? { x: opt.x, y: opt.y } : freeSpot(r);
     const sp = R0 * 0.35 * +S.speed;
     const a = rand(0, Math.PI * 2);
@@ -255,7 +324,6 @@
       game.count++;
       game.lastPop = game.t;
       if (game.count >= game.nextParty) { game.nextParty += PARTY_EVERY; startParty(); }
-      game.fx.push({ type: "plus", x: b.x, y: b.y, life: 0.8, max: 0.8, text: "+1", hue: b.hue });
     }
     if (b.kind === "gold") {
       for (let k = 0; k < 10; k++) game.fx.push({ type: "star", x: b.x, y: b.y, vx: rand(-1, 1) * b.r * 3, vy: rand(-1, 1) * b.r * 3,
@@ -276,12 +344,14 @@
 
   // ---------- 状態 ----------
   // ---------- 映しっぱなし ----------
-  const PARTY_EVERY = 30;     // この数ごとに「ごほうびタイム」
+  const PARTY_EVERY = 30;     // この数だけ割れるごとに「ごほうびタイム」
+  const PARTY_LEN = 15;       // ごほうびタイムの長さ（秒）
   const IDLE_RESET = 40;      // だれも割らない時間がこれだけ続いたら、かずを 0 にもどす
   function resetCount() { game.count = 0; game.nextParty = PARTY_EVERY; game.party = 0; }
   function startParty() {
-    game.party = 8;           // 8秒間、玉がいっぱい
-    sndJingle([4, 5, 6, 7, null, 5, 8], 0.13);
+    game.party = PARTY_LEN;   // このあいだ、玉がいっぱい・色が変わる・BGM が変わる
+    game.partyN++;
+    sndJingle([4, 5, 6, 7, null, 5, 8], 0.11);
     for (let k = 0; k < 50; k++) game.fx.push({ type: "confetti", x: rand(0, W), y: rand(-H * 0.2, H), vx: rand(-20, 20), vy: rand(20, 70),
       life: rand(3, 5), max: 5, hue: rand(0, 360), s: MIN * rand(0.008, 0.014), rot: rand(0, 6), vr: rand(-4, 4) });
   }
@@ -291,19 +361,24 @@
     game.t += dt; game.stateT += dt;
     const st = game.state;
     if (game.party > 0) game.party -= dt;
+    // 0→1 でゆっくり切りかえる（色・BGM）。カメラがだまされないように1.5秒かける
+    game.partyMix += ((game.party > 0.8 ? 1 : 0) - game.partyMix) * Math.min(1, dt / 1.5 * 2.5);
     if (game.count > 0 && game.t - game.lastPop > IDLE_RESET) resetCount();
 
     // 玉を足す
-    const want = Math.round(targetCount() * (game.party > 0 ? 1.6 : 1));
+    const want = Math.round(targetCount() * (game.party > 0 ? 2.4 : 1));
     game.spawnWait -= dt;
     const bigOnes = game.bubbles.filter((b) => b.kind !== "small" && !b.leaving);
     if (bigOnes.length < want && game.spawnWait <= 0) {
       game.bubbles.push(makeBubble());
-      game.spawnWait = game.party > 0 ? rand(0.05, 0.12) : rand(0.15, 0.4);
+      game.spawnWait = game.party > 0 ? rand(0.03, 0.08) : rand(0.15, 0.4);
     }
     // 多すぎる玉（ごほうびタイムのあと）や、割られない小さい玉は、ゆっくり消える
     if (bigOnes.length > want + 1 && game.party <= 0) bigOnes[0].leaving = true;
     for (const b of game.bubbles) if (b.kind === "small" && b.age > 25) b.leaving = true;
+
+    if (game.party > 1 && Math.random() < dt * 14) game.fx.push({ type: "confetti", x: rand(0, W), y: -10, vx: rand(-20, 20), vy: rand(40, 90),
+      life: rand(3, 5), max: 5, hue: rand(0, 360), s: MIN * rand(0.008, 0.014), rot: rand(0, 6), vr: rand(-4, 4) });
 
     // 玉を動かす
     for (const b of game.bubbles) {
@@ -452,6 +527,22 @@
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.drawImage(bg, 0, 0);
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    const pm = game.partyMix;
+    if (pm > 0.01) {
+      // 色がゆっくりまわる明るい背景＋まわりのにじいろの光
+      const h0 = (game.t * 25) % 360;
+      ctx.globalAlpha = pm;
+      const g = ctx.createLinearGradient(0, 0, W, H);
+      g.addColorStop(0, `hsl(${h0},70%,32%)`); g.addColorStop(0.5, `hsl(${(h0 + 60) % 360},70%,28%)`); g.addColorStop(1, `hsl(${(h0 + 120) % 360},70%,32%)`);
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+      const edge = MIN * 0.16;
+      for (const [x0, y0, x1, y1, rx, ry, rw, rh] of [[0, 0, 0, edge, 0, 0, W, edge], [0, H, 0, H - edge, 0, H - edge, W, edge], [0, 0, edge, 0, 0, 0, edge, H], [W, 0, W - edge, 0, W - edge, 0, edge, H]]) {
+        const eg = ctx.createLinearGradient(x0, y0, x1, y1);
+        eg.addColorStop(0, `hsla(${(h0 + 180) % 360},100%,70%,0.55)`); eg.addColorStop(1, `hsla(${(h0 + 180) % 360},100%,70%,0)`);
+        ctx.fillStyle = eg; ctx.fillRect(rx, ry, rw, rh);
+      }
+      ctx.globalAlpha = 1;
+    }
     // 背景のつぶつぶ
     for (const d of game.dots) {
       ctx.fillStyle = `rgba(160,210,255,${0.08 + 0.06 * Math.sin(game.t * 0.5 + d.p)})`;
@@ -495,18 +586,19 @@
     }
 
     // 文字
-    if (game.count > 0) {
-      const left = IDLE_RESET - (game.t - game.lastPop);
-      ctx.globalAlpha = Math.min(1, left / 5);     // だれもいなくなったら、すっと消える
-      hudPill(`みんなで ${game.count}こ`, game.party > 0 ? "ごほうびタイム！" : null, null);
-      ctx.globalAlpha = 1;
-    }
-    if (game.party > 7) {
-      const k = 1 - (game.party - 7);
-      const s = MIN * 0.12 * (0.7 + 0.3 * Math.min(1, k * 3));
-      ctx.globalAlpha = Math.min(1, (8 - game.party) * 4, (game.party - 7) * 3 + 0.2);
-      text("ごほうびタイム！", W / 2, H / 2 + s * 0.8, s, "#ffe08a");
-      text("ごほうびタイム！", W / 2, H / 2 - s * 0.8, s, "#ffe08a", Math.PI);
+    if (game.party > 0) {
+      const el = PARTY_LEN - game.party;     // はじまってからの秒
+      if (el < 2.5) {
+        const s = MIN * 0.13 * (0.7 + 0.3 * Math.min(1, el * 3)) * (1 + 0.04 * Math.sin(el * 12));
+        ctx.globalAlpha = Math.min(1, el * 4, (2.5 - el) * 2);
+        text("ごほうびタイム！", W / 2, H / 2 + s * 0.8, s, "#ffe08a");
+        text("ごほうびタイム！", W / 2, H / 2 - s * 0.8, s, "#ffe08a", Math.PI);
+      } else {
+        const s = MIN * 0.055;
+        ctx.globalAlpha = Math.min(1, el - 2.5, game.party) * (0.75 + 0.25 * Math.sin(el * 5));
+        text("ごほうびタイム！", W / 2, H - s * 1.1, s, "#ffe08a");
+        text("ごほうびタイム！", W / 2, s * 1.1, s, "#ffe08a", Math.PI);
+      }
       ctx.globalAlpha = 1;
     }
     // しばらくだれも来ないときは、玉のそばに足あとを出して「ふんでね」
@@ -656,7 +748,6 @@
       let hit = 0, n = 0;
       for (let gy = Math.max(0, ((y - r) / ch) | 0); gy <= Math.min(GY - 1, ((y + r) / ch) | 0); gy++) {
         const cy = (gy + 0.5) * ch;
-        if (game.count > 0 && (cy < hudH || cy > H - hudH) && Math.abs(x - W / 2) < MIN * 0.35) continue;   // 数字の帯は見ない
         for (let gx = Math.max(0, ((x - r) / cw) | 0); gx <= Math.min(GX - 1, ((x + r) / cw) | 0); gx++) {
           const cx = (gx + 0.5) * cw;
           if ((cx - x) ** 2 + (cy - y) ** 2 > r * r) continue;
@@ -852,6 +943,7 @@
         applyMotion(); applyMotion(); motion.fill(0);
       },
       solveH, applyH, game,
+      audio: () => ({ state: ac && ac.state, bgm: bgmMode, step: bgmStep }),
     };
     // ?test&auto=play / party / idle : スクリーンショット確認用にその場面まで進める
     const auto = (location.search.match(/auto=(\w+)/) || [])[1];
@@ -861,7 +953,7 @@
       else {
         for (const b of game.bubbles.slice(0, 5)) hitAt(b.x, b.y);
         if (auto === "party") { game.count = PARTY_EVERY - 1; hitAt(game.bubbles[0].x, game.bubbles[0].y); }
-        __fumu.tick(auto === "party" ? 0.5 : 0.2);
+        __fumu.tick(auto === "party" ? 4 : 0.2);
       }
     }
   }
