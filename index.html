@@ -68,7 +68,7 @@
       <button data-v="0">オフ</button><button data-v="1">オン</button>
     </span>
     <span class="note">床センサーがマウス移動として届くとき「オン」</span></div>
-  <p class="note">映しっぱなし用：スタートも終わりもありません。みんなで30こ割るごとに「ごほうびタイム」（15秒：BGM がはやくなり、まわりがにじいろに光り、玉がいっぱい）。<br>音はブラウザのきまりで、開いたあと1回だけ画面をタッチ（またはキーを押す）と鳴るようになります。<br>時間つきのゲーム版は game.html。</p>
+  <p class="note">映しっぱなし用：スタートも終わりもありません。みんなで50こ割るごとに「ごほうびタイム」（5秒：BGM がはやくなり、まわりがにじいろに光り、玉がいっぱい）。<br>音はブラウザのきまりで、開いたあと1回だけ画面をタッチ（またはキーを押す）と鳴るようになります。<br>時間つきのゲーム版は game.html。</p>
   <div class="row"><button class="btn" id="fsBtn" type="button">全画面</button>
     <button class="btn" id="restartBtn" type="button">かずを 0 にもどす</button></div>
 
@@ -265,7 +265,7 @@
   // ---------- ゲームの中身 ----------
   const rand = (a, b) => a + Math.random() * (b - a);
   const HUES = [195, 330, 50, 140, 270, 20, 175];
-  const game = { state: "play", partyN: 0, partyMix: 0, lastPop: -999, party: 0, nextParty: 30, t: 0, stateT: 0, count: 0, timeLeft: 0, bubbles: [], fx: [], dots: [], startBubble: null, spawnWait: 0 };
+  const game = { state: "play", partyN: 0, partyMix: 0, lastPop: -999, party: 0, nextParty: 50, t: 0, stateT: 0, count: 0, timeLeft: 0, bubbles: [], fx: [], dots: [], startBubble: null, spawnWait: 0 };
   let nextId = 1;
 
   function targetCount() {
@@ -344,8 +344,8 @@
 
   // ---------- 状態 ----------
   // ---------- 映しっぱなし ----------
-  const PARTY_EVERY = 30;     // この数だけ割れるごとに「ごほうびタイム」
-  const PARTY_LEN = 15;       // ごほうびタイムの長さ（秒）
+  const PARTY_EVERY = 50;     // この数だけ割れるごとに「ごほうびタイム」
+  const PARTY_LEN = 5;        // ごほうびタイムの長さ（秒）
   const IDLE_RESET = 40;      // だれも割らない時間がこれだけ続いたら、かずを 0 にもどす
   function resetCount() { game.count = 0; game.nextParty = PARTY_EVERY; game.party = 0; }
   function startParty() {
